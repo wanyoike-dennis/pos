@@ -120,7 +120,7 @@ export default function PosApp() {
           <div className="space-y-3">
             <input className="input" value={productName} onChange={e => setProductName(e.target.value)} placeholder="Name" />
             <input className="input" type="number" value={productPrice} onChange={e => setProductPrice(e.target.value)} placeholder="Price" />
-            <select className="input" value={productCategory} onChange={e => setProductCategory(e.target.value)}>
+            <select className="input bg-gray-800" value={productCategory} onChange={e => setProductCategory(e.target.value)}>
               {categories.slice(1).map((cat) => (<option key={cat} value={cat}>{cat}</option>))}
             </select>
             <button onClick={addProduct} className="btn-blue"><PlusCircle size={18} /> Add Product</button>

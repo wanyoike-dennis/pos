@@ -3,90 +3,107 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const PDFDocument = require('pdfkit');
 const sqlite3 = require('better-sqlite3');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(bodyParser.json());
-app.use(express.static('public'));
 
-// SQLite DB setup
-const dbPath = path.resolve(__dirname, 'pos.db');
+// SQLite setup
+const dbPath = path.join(__dirname, 'pos.db');
 const db = new sqlite3(dbPath);
 
-// Create sales table if not exists
-const initTable = `CREATE TABLE IF NOT EXISTS sales (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  data TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-)`;
-db.prepare(initTable).run();
+// Create table if not exists
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT,
+    sessions TEXT,
+    items TEXT,
+    total REAL
+  )
+`).run();
 
-// Save sale to DB
+// Save sale data to DB
 app.post('/save-sale', (req, res) => {
-  const { sessions, items } = req.body;
-  const entry = { sessions, items };
-  const stmt = db.prepare('INSERT INTO sales (data) VALUES (?)');
-  stmt.run(JSON.stringify(entry));
-  res.sendStatus(200);
+  const { sessions = [], items = [] } = req.body;
+
+  // Recalculate session charge: 1 KES per minute, min 10 KES
+  const updatedSessions = sessions.map(s => {
+    const duration = Number(s.duration);
+    const charge = Math.max(duration, 10); // Enforce minimum
+    return {
+      computer: s.computer,
+      duration,
+      charge,
+    };
+  });
+
+  const total =
+    updatedSessions.reduce((sum, s) => sum + s.charge, 0) +
+    items.reduce((sum, p) => sum + Number(p.price), 0);
+
+  const stmt = db.prepare(`
+    INSERT INTO sales (date, sessions, items, total)
+    VALUES (?, ?, ?, ?)
+  `);
+  stmt.run(new Date().toISOString(), JSON.stringify(updatedSessions), JSON.stringify(items), total);
+
+  res.json({ message: 'Sale saved', sessions: updatedSessions });
 });
 
-// Utility: Category totals
-const getCategoryTotals = (products) => {
-  const totals = {};
-  products.forEach(p => {
-    if (!totals[p.category]) totals[p.category] = 0;
-    totals[p.category] += p.price;
-  });
-  return totals;
-};
-
-// Generate PDF receipt
+// Generate receipt PDF
 app.post('/generate-receipt', (req, res) => {
-  const { sessions, items, total } = req.body;
-  const categoryTotals = getCategoryTotals(items);
+  const { sessions = [], items = [], total } = req.body;
 
-  const doc = new PDFDocument({ margin: 40 });
-  res.setHeader('Content-disposition', 'inline; filename="receipt.pdf"');
+  const updatedSessions = sessions.map(s => {
+    const duration = Number(s.duration);
+    const charge = Math.max(duration, 10); // Same logic
+    return {
+      computer: s.computer,
+      duration,
+      charge,
+    };
+  });
+
+  const doc = new PDFDocument({ size: 'A6', margin: 20 });
+  const filename = `receipt-${Date.now()}.pdf`;
+
+  res.setHeader('Content-disposition', `inline; filename="${filename}"`);
   res.setHeader('Content-type', 'application/pdf');
   doc.pipe(res);
 
-  // Header
-  if (fs.existsSync('public/logo.png')) {
-    doc.image('public/logo.png', 450, 30, { width: 60 });
-  }
-  doc.fontSize(20).text('Cyber Café Receipt', 40, 40);
-  doc.fontSize(10).fillColor('gray').text(new Date().toLocaleString(), 40, 65);
-  doc.moveDown().moveTo(40, 90).lineTo(550, 90).stroke();
-
+  doc.fontSize(16).text('Cyber Café Receipt', { align: 'center' });
+  doc.moveDown();
+  doc.fontSize(10).text(`Date: ${new Date().toLocaleString()}`);
   doc.moveDown();
 
-  // Sessions
-  sessions.forEach(s => {
-    doc.fontSize(12).fillColor('black').text(`Session: ${s.computer} - ${s.duration} min - KES ${s.charge}`);
-  });
+  if (updatedSessions.length) {
+    doc.fontSize(12).text('Sessions:', { underline: true });
+    updatedSessions.forEach(s => {
+      doc.text(`- ${s.computer}: ${s.duration} min — KES ${s.charge}`);
+    });
+    doc.moveDown();
+  }
 
-  // Products
-  items.forEach(p => {
-    doc.text(`Product: ${p.name} (${p.category}) - KES ${p.price}`);
-  });
+  if (items.length) {
+    doc.fontSize(12).text('Products/Services:', { underline: true });
+    items.forEach(p => {
+      doc.text(`- ${p.name} (${p.category}): KES ${p.price}`);
+    });
+    doc.moveDown();
+  }
 
-  // Category Totals
-  doc.moveDown().fontSize(12).text('Sales by Category:', { underline: true });
-  Object.entries(categoryTotals).forEach(([cat, amount]) => {
-    doc.text(`${cat}: KES ${amount.toFixed(2)}`);
-  });
-
-  // Total
-  doc.moveDown().fontSize(14).text(`TOTAL: KES ${total}`, { align: 'right' });
-
-  // Footer
-  doc.moveDown().fontSize(10).fillColor('gray').text('Thank you for choosing our cyber café!', { align: 'center' });
+  doc.fontSize(14).text(`Total: KES ${total}`, { align: 'right' });
+  doc.moveDown().fontSize(10).text('Thank you for your visit!', { align: 'center' });
 
   doc.end();
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Start server
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
