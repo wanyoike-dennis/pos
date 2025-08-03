@@ -1,5 +1,6 @@
 import './App.css';
 import { useState, useEffect } from 'react';
+import { Monitor, PlusCircle, Trash2, ReceiptText } from 'lucide-react';
 import Header from './components/Header';
 import SessionInput from './components/SessionInput';
 import ProductInput from './components/ProductInput';
