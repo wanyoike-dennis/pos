@@ -1,13 +1,25 @@
-import { useState } from 'react';
 import './App.css';
-//import { useState } from 'react';
-import { Monitor, ReceiptText, PlusCircle, Trash2, Moon, Sun, Printer } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import Header from './components/Header';
+import SessionInput from './components/SessionInput';
+import ProductInput from './components/ProductInput';
+import InventoryManager from './components/InventoryManager';
+import SalesSummary from './components/SalesSummary';
+import TotalBar from './components/TotalBar';
+import ReceiptPreview from './components/ReceiptPreview';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 export default function PosApp() {
-  const [sessions, setSessions] = useState([]);
-  const [products, setProducts] = useState([]);
+  // Load from localStorage or default to []
+  const [sessions, setSessions] = useState(() => {
+    const saved = localStorage.getItem('sessions');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [products, setProducts] = useState(() => {
+    const saved = localStorage.getItem('products');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [computer, setComputer] = useState('');
   const [duration, setDuration] = useState('');
   const [productName, setProductName] = useState('');
@@ -17,25 +29,73 @@ export default function PosApp() {
   const [showPreview, setShowPreview] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('All');
 
+  // Inventory state
+  const [inventory, setInventory] = useState([]);
+  const [invName, setInvName] = useState('');
+  const [invCategory, setInvCategory] = useState('Printing');
+  const [invPrice, setInvPrice] = useState('');
+  const [invQty, setInvQty] = useState('');
+
   const categories = ['All', 'Printing', 'Typing', 'Browsing', 'Other'];
   const currentDate = new Date().toLocaleString();
+
+  // Fetch inventory from backend
+  useEffect(() => {
+    fetch(`${API}/inventory`)
+      .then(res => res.json())
+      .then(setInventory)
+      .catch(() => setInventory([]));
+  }, []);
+
+  // Save sessions/products to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('sessions', JSON.stringify(sessions));
+  }, [sessions]);
+
+  useEffect(() => {
+    localStorage.setItem('products', JSON.stringify(products));
+  }, [products]);
 
   const filteredProducts = selectedCategory === 'All'
     ? products
     : products.filter(p => p.category === selectedCategory);
 
   const addSession = () => {
-    const charge = Math.ceil(duration / 30) * 20;
+    if (!computer || !duration || duration <= 0) return alert("Enter valid computer name and duration");
+    const charge = Math.ceil(duration / 20) * 20;
     setSessions([...sessions, { computer, duration, charge }]);
     setComputer('');
     setDuration('');
   };
 
+  // Add product from inventory
   const addProduct = () => {
-    setProducts([...products, { name: productName, price: parseFloat(productPrice), category: productCategory }]);
+    if (!productName) return alert("Select a product from inventory");
+    const invItem = inventory.find(i => i.name === productName);
+    if (!invItem) return alert("Product not found in inventory");
+    if (invItem.quantity <= 0) return alert("Out of stock");
+    setProducts([...products, { name: invItem.name, price: invItem.price, category: invItem.category }]);
     setProductName('');
     setProductPrice('');
     setProductCategory('Printing');
+  };
+
+  // Add or update inventory item
+  const addInventory = async () => {
+    if (!invName || !invPrice || !invQty) return alert('Fill all inventory fields');
+    await fetch(`${API}/inventory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: invName,
+        category: invCategory,
+        price: parseFloat(invPrice),
+        quantity: parseInt(invQty)
+      })
+    });
+    setInvName(''); setInvCategory('Printing'); setInvPrice(''); setInvQty('');
+    // Refresh inventory
+    fetch(`${API}/inventory`).then(res => res.json()).then(setInventory);
   };
 
   const removeSession = (index) => {
@@ -51,6 +111,7 @@ export default function PosApp() {
   };
 
   const total = [...sessions.map(s => s.charge), ...products.map(p => p.price)].reduce((a, b) => a + b, 0);
+  const filteredTotal = [...sessions.map(s => s.charge), ...filteredProducts.map(p => p.price)].reduce((a, b) => a + b, 0);
 
   const categoryTotals = products.reduce((acc, p) => {
     acc[p.category] = (acc[p.category] || 0) + p.price;
@@ -60,7 +121,10 @@ export default function PosApp() {
   const hasData = sessions.length > 0 || products.length > 0;
 
   const generateReceipt = async () => {
+    if (!hasData) return;
+
     setShowPreview(false);
+
     await fetch(`${API}/save-sale`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -72,25 +136,24 @@ export default function PosApp() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessions, items: products, total })
     });
+
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
     window.open(url, '_blank');
+    // Refresh inventory after sale
+    fetch(`${API}/inventory`).then(res => res.json()).then(setInventory);
+  };
+
+  const clearAll = () => {
+    if (confirm("Are you sure you want to clear all entries?")) {
+      setSessions([]);
+      setProducts([]);
+    }
   };
 
   return (
     <div className={`transition-colors duration-300 ${darkMode ? 'bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-800'} min-h-screen p-6 font-sans`}>
-      <header className="text-center flex flex-col items-center gap-2">
-        <img src="/logo.png" alt="Cyber Café Logo" className="w-14 h-14 rounded-full shadow-md" />
-        <h1 className="text-4xl font-extrabold tracking-tight text-blue-700 dark:text-blue-300">Cyber Café POS</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-300">Fast & simple billing system</p>
-        <button
-          onClick={() => setDarkMode(!darkMode)}
-          className="mt-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-3 py-1 rounded-full flex items-center gap-2"
-        >
-          {darkMode ? <Sun size={16} /> : <Moon size={16} />} {darkMode ? 'Light Mode' : 'Dark Mode'}
-        </button>
-      </header>
-
+      <Header darkMode={darkMode} setDarkMode={setDarkMode} />
       <div className="grid md:grid-cols-2 gap-6 mt-6">
         {/* Session Input */}
         <div className="bg-gray-50 dark:bg-gray-800 p-5 rounded-xl shadow-md">
@@ -120,7 +183,7 @@ export default function PosApp() {
           <div className="space-y-3">
             <input className="input" value={productName} onChange={e => setProductName(e.target.value)} placeholder="Name" />
             <input className="input" type="number" value={productPrice} onChange={e => setProductPrice(e.target.value)} placeholder="Price" />
-            <select className="input bg-gray-800" value={productCategory} onChange={e => setProductCategory(e.target.value)}>
+            <select className="input" value={productCategory} onChange={e => setProductCategory(e.target.value)}>
               {categories.slice(1).map((cat) => (<option key={cat} value={cat}>{cat}</option>))}
             </select>
             <button onClick={addProduct} className="btn-blue"><PlusCircle size={18} /> Add Product</button>
@@ -135,79 +198,38 @@ export default function PosApp() {
           </ul>
         </div>
       </div>
-
-      {/* Category Summary */}
-      {hasData && (
-        <div className="bg-gray-50 dark:bg-gray-800 p-6 rounded-xl shadow-md mt-6 max-w-lg mx-auto">
-          <h3 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">Sales Summary by Category</h3>
-          <ul className="space-y-2 text-sm text-gray-800 dark:text-gray-100">
-            {Object.entries(categoryTotals).map(([cat, amount]) => (
-              <li key={cat} className="flex justify-between border-b border-gray-300 dark:border-gray-600 pb-1">
-                <span>{cat}</span>
-                <span>KES {amount.toFixed(2)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Total and Preview */}
-      <div className="bg-gray-50 dark:bg-gray-800 p-6 rounded-xl shadow-md text-center mt-6">
-        <h2 className="font-bold text-xl text-gray-800 dark:text-white">
-          Total: <span className="text-green-600 dark:text-green-400">KES {total}</span>
-        </h2>
-        <div className="flex flex-col md:flex-row justify-center gap-4 mt-4">
-          <button onClick={() => setShowPreview(true)} className="bg-yellow-500 hover:bg-yellow-600 text-white py-2 px-4 rounded-lg font-medium flex items-center gap-2">
-            <Printer size={18} /> Preview Receipt
-          </button>
-          <button onClick={generateReceipt} className="bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg font-medium flex items-center gap-2">
-            <Printer size={18} /> Generate Receipt
-          </button>
-        </div>
-
-        {showPreview && (
-          <div className="mt-6 p-6 border rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-800 dark:text-white max-w-lg mx-auto shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-xl font-semibold">Cyber Café</h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400">{currentDate}</p>
-              </div>
-              <img src="/logo.png" alt="Logo" className="w-10 h-10 rounded-full" />
-            </div>
-            <hr className="mb-3 border-gray-300 dark:border-gray-600" />
-            <div className="mb-4">
-              <label htmlFor="category" className="block text-sm mb-1">Filter by Category</label>
-              <select id="category" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="input">
-                {categories.map((cat) => (<option key={cat} value={cat}>{cat}</option>))}
-              </select>
-            </div>
-            <table className="w-full text-sm">
-              <thead className="border-b border-gray-300 dark:border-gray-600 text-left">
-                <tr><th className="py-1">Item</th><th className="py-1 text-right">Price</th></tr>
-              </thead>
-              <tbody>
-                {sessions.map((s, i) => (
-                  <tr key={i} className="border-b border-gray-200 dark:border-gray-600">
-                    <td className="py-1">Session: {s.computer} - {s.duration} min</td>
-                    <td className="py-1 text-right">KES {s.charge}</td>
-                  </tr>
-                ))}
-                {filteredProducts.map((p, i) => (
-                  <tr key={i} className="border-b border-gray-200 dark:border-gray-600">
-                    <td className="py-1">Product: {p.name} <span className="text-xs text-gray-500 dark:text-gray-400">({p.category})</span></td>
-                    <td className="py-1 text-right">KES {p.price}</td>
-                  </tr>
-                ))}
-                <tr className="font-bold text-base">
-                  <td className="py-2">Total</td>
-                  <td className="py-2 text-right">KES {total}</td>
-                </tr>
-              </tbody>
-            </table>
-            <p className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">Thank you for choosing our cyber café!</p>
-          </div>
-        )}
-      </div>
+      <InventoryManager
+        invName={invName}
+        setInvName={setInvName}
+        invPrice={invPrice}
+        setInvPrice={setInvPrice}
+        invQty={invQty}
+        setInvQty={setInvQty}
+        invCategory={invCategory}
+        setInvCategory={setInvCategory}
+        addInventory={addInventory}
+        inventory={inventory}
+        categories={categories}
+      />
+      {hasData && <SalesSummary categoryTotals={categoryTotals} />}
+      <TotalBar
+        total={total}
+        hasData={hasData}
+        setShowPreview={setShowPreview}
+        generateReceipt={generateReceipt}
+        clearAll={clearAll}
+      />
+      <ReceiptPreview
+        showPreview={showPreview}
+        setShowPreview={setShowPreview}
+        currentDate={currentDate}
+        categories={categories}
+        selectedCategory={selectedCategory}
+        setSelectedCategory={setSelectedCategory}
+        sessions={sessions}
+        filteredProducts={filteredProducts}
+        filteredTotal={filteredTotal}
+      />
     </div>
   );
 }
