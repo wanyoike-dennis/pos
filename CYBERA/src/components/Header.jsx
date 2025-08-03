@@ -1,4 +1,4 @@
-import PosApp from './App.jsx';
+
 import { Sun, Moon } from 'lucide-react';
 
 export default function Header({ darkMode, setDarkMode }) {
